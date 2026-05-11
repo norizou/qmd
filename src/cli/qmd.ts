@@ -81,7 +81,7 @@ import {
   type ReindexResult,
   type ChunkStrategy,
 } from "../store.js";
-import { disposeDefaultLlamaCpp, getDefaultLlamaCpp, setDefaultLlamaCpp, LlamaCpp, withLLMSession, pullModels, DEFAULT_MODEL_CACHE_DIR, resolveEmbedModel, resolveGenerateModel, resolveRerankModel, resolveModels, inspectGgufFile, isDarwinMetalMitigationActive } from "../llm.js";
+import { disposeDefaultLlamaCpp, disposeDefaultLLM, getDefaultLlamaCpp, getDefaultLLM, setDefaultLlamaCpp, setDefaultLLM, LlamaCpp, OpenAI, withLLMSession, pullModels, DEFAULT_MODEL_CACHE_DIR, resolveEmbedModel, resolveGenerateModel, resolveRerankModel, resolveModels, inspectGgufFile, isDarwinMetalMitigationActive, DEFAULT_EMBED_MODEL_URI, DEFAULT_GENERATE_MODEL_URI, DEFAULT_RERANK_MODEL_URI, type LLM } from "../llm.js";
 import {
   formatSearchResults,
   formatDocuments,
@@ -134,11 +134,28 @@ function getStore(): ReturnType<typeof createStore> {
       const activeModels = ensureModelsConfiguredForCli();
       const config = loadConfig();
       syncConfigToDb(store.db, config);
-      setDefaultLlamaCpp(new LlamaCpp({
-        embedModel: activeModels.embed,
-        generateModel: activeModels.generate,
-        rerankModel: activeModels.rerank,
-      }));
+      if (config.models) {
+        if (config.models.external_api?.base_url) {
+          const llm = new OpenAI({
+            baseUrl: config.models.external_api.base_url,
+            apiKey: config.models.external_api.api_key,
+            embedModel: activeModels.embed,
+            generateModel: activeModels.generate,
+            rerankModel: activeModels.rerank,
+            timeout: config.models.external_api.timeout,
+          });
+          setDefaultLLM(llm);
+          store.llm = llm;
+        } else {
+          const llm = new LlamaCpp({
+            embedModel: activeModels.embed,
+            generateModel: activeModels.generate,
+            rerankModel: activeModels.rerank,
+          });
+          setDefaultLlamaCpp(llm);
+          store.llm = llm;
+        }
+      }
     } catch {
       // Config may not exist yet — that's fine, DB works without it
     }
@@ -618,6 +635,48 @@ async function showStatus(): Promise<void> {
     console.log(`  Generation:  ${hfLink(activeModels.generate)}`);
   }
 
+  // Device / GPU info
+  // Important: probing node-llama-cpp can abort the whole process on machines with
+  // incompatible GPU drivers (for example Vulkan loader present but no usable driver).
+  // Keep `qmd status` safe by default and make the expensive/native probe opt-in.
+  if (process.env.QMD_STATUS_DEVICE_PROBE === "1") {
+    console.log(`\n${c.bold}Device${c.reset}`);
+    const llm = getDefaultLLM();
+    if (llm instanceof OpenAI) {
+      console.log(`  Backend:  ${c.green}External API${c.reset} (${llm.embedModelName})`);
+    } else if (llm instanceof LlamaCpp) {
+      try {
+        const device = await llm.getDeviceInfo({ allowBuild: false });
+        console.log(`  Backend:  ${c.green}Local GGUF${c.reset}`);
+        if (device.gpu) {
+          console.log(`  GPU:      ${c.green}${device.gpu}${c.reset} (offloading: ${device.gpuOffloading ? 'yes' : 'no'})`);
+          if (device.gpuDevices.length > 0) {
+            // Deduplicate and count GPUs
+            const counts = new Map<string, number>();
+            for (const name of device.gpuDevices) {
+              counts.set(name, (counts.get(name) || 0) + 1);
+            }
+            const deviceStr = Array.from(counts.entries())
+              .map(([name, count]) => count > 1 ? `${count}× ${name}` : name)
+              .join(', ');
+            console.log(`  Devices:  ${deviceStr}`);
+          }
+          if (device.vram) {
+            console.log(`  VRAM:     ${formatBytes(device.vram.free)} free / ${formatBytes(device.vram.total)} total`);
+          }
+        } else {
+          console.log(`  GPU:      ${c.yellow}none${c.reset} (running on CPU — models will be slow)`);
+          console.log(`  ${c.dim}Tip: Install CUDA, Vulkan, or Metal support for GPU acceleration.${c.reset}`);
+        }
+        console.log(`  CPU:      ${device.cpuCores} math cores`);
+      } catch (error) {
+        console.log(`  Status:   ${c.dim}probe failed${c.reset}`);
+        if (error instanceof Error && error.message) {
+          console.log(`  ${c.dim}${error.message}${c.reset}`);
+        }
+      }
+    }
+  }
 
   // Tips section
   const tips: string[] = [];

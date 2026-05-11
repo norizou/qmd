@@ -525,6 +525,11 @@ export interface LLM {
   embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult | null>;
 
   /**
+   * Get embeddings for multiple texts (batch)
+   */
+  embedBatch(texts: string[], options?: EmbedOptions): Promise<(EmbeddingResult | null)[]>;
+
+  /**
    * Generate text completion
    */
   generate(prompt: string, options?: GenerateOptions): Promise<GenerateResult | null>;
@@ -550,6 +555,291 @@ export interface LLM {
    * Dispose of resources
    */
   dispose(): Promise<void>;
+
+  /**
+   * Get the name of the embedding model
+   */
+  readonly embedModelName: string;
+}
+
+// =============================================================================
+// OpenAI-Compatible API Implementation
+// =============================================================================
+
+export type OpenAIConfig = {
+  baseUrl: string;
+  apiKey?: string;
+  embedModel?: string;
+  generateModel?: string;
+  rerankModel?: string;
+  timeout?: number;
+};
+
+/**
+ * LLM implementation using OpenAI-compatible HTTP API
+ */
+export class OpenAI implements LLM {
+  private readonly baseUrl: string;
+  private readonly apiKey: string;
+  private readonly embedModel: string;
+  private readonly generateModel: string;
+  private readonly rerankModel: string;
+  private readonly timeout: number;
+
+  constructor(config: OpenAIConfig) {
+    this.baseUrl = config.baseUrl.replace(/\/$/, ''); // Remove trailing slash
+    this.apiKey = config.apiKey || 'dummy';
+    this.embedModel = config.embedModel || 'multilingual-e5-large-instruct';
+    this.generateModel = config.generateModel || 'gemma-3-27b-it';
+    this.rerankModel = config.rerankModel || 'mmarco-mminilmv2-l12-h384-v1';
+    this.timeout = config.timeout || 30000;
+  }
+
+  get embedModelName(): string {
+    return this.embedModel;
+  }
+
+  async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult | null> {
+    const model = options?.model || this.embedModel;
+    const input = options?.isQuery ? formatQueryForEmbedding(text, model) : formatDocForEmbedding(text, options?.title, model);
+
+    try {
+      const response = await this.fetchWithTimeout('/embeddings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          input,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Embedding API error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json() as { data?: Array<{ embedding: number[] }> };
+      const embedding = data.data?.[0]?.embedding;
+
+      if (!embedding) {
+        throw new Error('Invalid embedding response format');
+      }
+
+      return { embedding, model };
+    } catch (error) {
+      console.error('OpenAI embed error:', error);
+      return null;
+    }
+  }
+
+  async embedBatch(texts: string[], options?: EmbedOptions): Promise<(EmbeddingResult | null)[]> {
+    // Try batch request first
+    const model = options?.model || this.embedModel;
+    const inputs = texts.map((text, i) =>
+      options?.isQuery ? formatQueryForEmbedding(text, model) : formatDocForEmbedding(text, options?.title, model)
+    );
+
+    try {
+      const response = await this.fetchWithTimeout('/embeddings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          input: inputs,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Batch embedding API error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json() as { data?: Array<{ embedding: number[] }> };
+      const embeddings = data.data as Array<{ embedding: number[] }>;
+
+      if (!embeddings || embeddings.length !== texts.length) {
+        throw new Error('Invalid batch embedding response format');
+      }
+
+      return embeddings.map((e) => ({ embedding: e.embedding, model }));
+    } catch (error) {
+      console.error('OpenAI batch embed error, falling back to sequential:', error);
+      // Fallback to sequential requests
+      return Promise.all(texts.map((text) => this.embed(text, options)));
+    }
+  }
+
+  async generate(prompt: string, options?: GenerateOptions): Promise<GenerateResult | null> {
+    const model = options?.model || this.generateModel;
+
+    // Open WebUI uses /api/chat/completions (OpenAI compatible)
+    try {
+      const response = await this.fetchWithTimeout('/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: options?.maxTokens || 512,
+          temperature: options?.temperature || 0.7,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Generation API error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+      const text = data.choices?.[0]?.message?.content;
+
+      if (!text) {
+        throw new Error('Invalid generation response format');
+      }
+
+      return { text, model, done: true };
+    } catch (error) {
+      console.error('OpenAI generate error:', error);
+      return null;
+    }
+  }
+
+  async modelExists(model: string): Promise<ModelInfo> {
+    // For external API, we assume the model exists if we can reach the endpoint
+    try {
+      const response = await this.fetchWithTimeout('/models', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json() as { data?: Array<{ id: string }> };
+        const models = data.data as Array<{ id: string }>;
+        const exists = models.some((m) => m.id === model);
+        return { name: model, exists, path: this.baseUrl };
+      }
+    } catch (error) {
+      // If we can't check, assume it exists
+    }
+
+    return { name: model, exists: true, path: this.baseUrl };
+  }
+
+  async expandQuery(query: string, options: { context?: string, includeLexical?: boolean, intent?: string } = {}): Promise<Queryable[]> {
+    const context = options.context;
+    const intent = options.intent;
+    const includeLexical = options.includeLexical ?? true;
+
+    // Build the prompt (same as LlamaCpp implementation)
+    let prompt = `You are a search query expansion assistant. Generate 2 alternative search queries for the given query.`;
+    if (context) {
+      prompt += `\n\nContext: ${context}`;
+    }
+    if (intent) {
+      prompt += `\n\nUser Intent: ${intent}`;
+    }
+    prompt += `\n\nOriginal query: "${query}"`;
+    prompt += `\n\nGenerate 2 alternative queries (one semantic, one hypothetical document). Return as JSON array: [{"type": "vec", "query": "..."}, {"type": "hyde", "query": "..."}]`;
+
+    const result = await this.generate(prompt, { maxTokens: 256, temperature: 0.3 });
+    if (!result) {
+      // Fallback: return original query as vec if generation fails
+      return [{ type: 'vec', text: query }];
+    }
+
+    try {
+      const expanded = JSON.parse(result.text) as Array<{ type: string; query: string }>;
+      const queries: Queryable[] = [];
+
+      for (const item of expanded) {
+        if (item.type === 'vec' || item.type === 'hyde') {
+          queries.push({ type: item.type as QueryType, text: item.query });
+        }
+      }
+
+      // Add lexical query if requested
+      if (includeLexical) {
+        queries.push({ type: 'lex', text: query });
+      }
+
+      return queries.length > 0 ? queries : [{ type: 'vec', text: query }];
+    } catch {
+      // If JSON parsing fails, return original query
+      return [{ type: 'vec', text: query }];
+    }
+  }
+
+  async rerank(query: string, documents: RerankDocument[], options?: RerankOptions): Promise<RerankResult> {
+    const model = options?.model || this.rerankModel;
+
+    // Use chat completions for reranking since Open WebUI doesn't have a dedicated rerank endpoint
+    try {
+      const docTexts = documents.map((d, i) => 
+        `[${i}] ${d.title || d.file}: ${d.text.substring(0, 300)}`
+      ).join('\n\n');
+      
+      const prompt = `Rate the relevance of each document to the query on a scale of 0.0 to 1.0.\n\nQuery: ${query}\n\nDocuments:\n${docTexts}\n\nReturn as JSON array: [{"index": 0, "score": 0.9}, {"index": 1, "score": 0.3}, ...]`;
+
+      const result = await this.generate(prompt, { maxTokens: 512, temperature: 0.1 });
+      
+      if (result && result.text) {
+        try {
+          const parsed = JSON.parse(result.text) as Array<{ index: number; score: number }>;
+          return {
+            results: parsed.map((r) => ({
+              file: documents[r.index]?.file || '',
+              score: Math.max(0, Math.min(1, r.score)), // Clamp score to [0, 1]
+              index: r.index,
+            })),
+            model,
+          };
+        } catch (error) {
+          console.error('Failed to parse rerank JSON response:', error);
+        }
+      }
+    } catch (error) {
+      console.error('OpenAI rerank error using chat completions:', error);
+    }
+
+    // Fallback: return all documents with neutral scores
+    return {
+      results: documents.map((d, i) => ({
+        file: d.file,
+        score: 0.5,
+        index: i,
+      })),
+      model,
+    };
+  }
+
+  async dispose(): Promise<void> {
+    // OpenAI is stateless, nothing to dispose
+  }
+
+  private async fetchWithTimeout(path: string, options: RequestInit): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+    try {
+      const response = await fetch(`${this.baseUrl}${path}`, {
+        ...options,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      return response;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      throw error;
+    }
+  }
 }
 
 // =============================================================================
@@ -1739,11 +2029,11 @@ export class LlamaCpp implements LLM {
  * Coordinates with LlamaCpp idle timeout to prevent disposal during active sessions.
  */
 class LLMSessionManager {
-  private llm: LlamaCpp;
+  private llm: LLM;
   private _activeSessionCount = 0;
   private _inFlightOperations = 0;
 
-  constructor(llm: LlamaCpp) {
+  constructor(llm: LLM) {
     this.llm = llm;
   }
 
@@ -1758,8 +2048,12 @@ class LLMSessionManager {
   /**
    * Returns true only when both session count and in-flight operations are 0.
    * Used by LlamaCpp to determine if idle unload is safe.
+   * For OpenAI (stateless), always returns true.
    */
   canUnload(): boolean {
+    if (this.llm instanceof OpenAI) {
+      return true; // OpenAI is stateless, no resources to unload
+    }
     return this._activeSessionCount === 0 && this._inFlightOperations === 0;
   }
 
@@ -1779,7 +2073,7 @@ class LLMSessionManager {
     this._inFlightOperations = Math.max(0, this._inFlightOperations - 1);
   }
 
-  getLlamaCpp(): LlamaCpp {
+  getLlm(): LLM {
     return this.llm;
   }
 }
@@ -1882,18 +2176,18 @@ class LLMSession implements ILLMSession {
   }
 
   async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult | null> {
-    return this.withOperation(() => this.manager.getLlamaCpp().embed(text, options));
+    return this.withOperation(() => this.manager.getLlm().embed(text, options));
   }
 
   async embedBatch(texts: string[], options?: EmbedOptions): Promise<(EmbeddingResult | null)[]> {
-    return this.withOperation(() => this.manager.getLlamaCpp().embedBatch(texts, options));
+    return this.withOperation(() => this.manager.getLlm().embedBatch(texts, options));
   }
 
   async expandQuery(
     query: string,
     options?: { context?: string; includeLexical?: boolean }
   ): Promise<Queryable[]> {
-    return this.withOperation(() => this.manager.getLlamaCpp().expandQuery(query, options));
+    return this.withOperation(() => this.manager.getLlm().expandQuery(query, options));
   }
 
   async rerank(
@@ -1901,7 +2195,7 @@ class LLMSession implements ILLMSession {
     documents: RerankDocument[],
     options?: RerankOptions
   ): Promise<RerankResult> {
-    return this.withOperation(() => this.manager.getLlamaCpp().rerank(query, documents, options));
+    return this.withOperation(() => this.manager.getLlm().rerank(query, documents, options));
   }
 }
 
@@ -1909,11 +2203,11 @@ class LLMSession implements ILLMSession {
 let defaultSessionManager: LLMSessionManager | null = null;
 
 /**
- * Get the session manager for the default LlamaCpp instance.
+ * Get the session manager for the default LLM instance.
  */
 function getSessionManager(): LLMSessionManager {
   const llm = getDefaultLlamaCpp();
-  if (!defaultSessionManager || defaultSessionManager.getLlamaCpp() !== llm) {
+  if (!defaultSessionManager || defaultSessionManager.getLlm() !== llm) {
     defaultSessionManager = new LLMSessionManager(llm);
   }
   return defaultSessionManager;
@@ -1952,7 +2246,7 @@ export async function withLLMSession<T>(
  * Unlike withLLMSession, this does not use the global singleton.
  */
 export async function withLLMSessionForLlm<T>(
-  llm: LlamaCpp,
+  llm: LLM,
   fn: (session: ILLMSession) => Promise<T>,
   options?: LLMSessionOptions
 ): Promise<T> {
@@ -2036,10 +2330,11 @@ export function isDarwinExitGuardInstalled(): boolean {
 }
 
 // =============================================================================
-// Singleton for default LlamaCpp instance
+// Singleton for default LLM instance
 // =============================================================================
 
 let defaultLlamaCpp: LlamaCpp | null = null;
+let defaultOpenAI: OpenAI | null = null;
 
 /**
  * Get the default LlamaCpp instance (creates one if needed). The LlamaCpp
@@ -2051,6 +2346,55 @@ export function getDefaultLlamaCpp(): LlamaCpp {
     defaultLlamaCpp = new LlamaCpp();
   }
   return defaultLlamaCpp;
+}
+
+/**
+ * Get the default LLM instance (creates one if needed).
+ * Returns OpenAI if QMD_EXTERNAL_API_BASE_URL is set or if defaultOpenAI exists, otherwise LlamaCpp.
+ */
+export function getDefaultLLM(): LLM {
+  // Return existing OpenAI instance if set via setDefaultLLM
+  if (defaultOpenAI) {
+    return defaultOpenAI;
+  }
+  // Check for environment variable configuration
+  const externalBaseUrl = process.env.QMD_EXTERNAL_API_BASE_URL;
+  if (externalBaseUrl) {
+    defaultOpenAI = new OpenAI({
+      baseUrl: externalBaseUrl,
+      apiKey: process.env.QMD_EXTERNAL_API_KEY || "dummy",
+      embedModel: process.env.QMD_EMBED_MODEL,
+      generateModel: process.env.QMD_GENERATE_MODEL,
+      rerankModel: process.env.QMD_RERANK_MODEL,
+    });
+    return defaultOpenAI;
+  }
+  return getDefaultLlamaCpp();
+}
+
+/**
+ * Set the default LLM instance (for testing)
+ */
+export function setDefaultLLM(llm: LLM): void {
+  if (llm instanceof LlamaCpp) {
+    defaultLlamaCpp = llm;
+  } else if (llm instanceof OpenAI) {
+    defaultOpenAI = llm;
+  }
+}
+
+/**
+ * Dispose the default LLM instances
+ */
+export async function disposeDefaultLLM(): Promise<void> {
+  if (defaultLlamaCpp) {
+    await defaultLlamaCpp.dispose();
+    defaultLlamaCpp = null;
+  }
+  if (defaultOpenAI) {
+    await defaultOpenAI.dispose();
+    defaultOpenAI = null;
+  }
 }
 
 /**

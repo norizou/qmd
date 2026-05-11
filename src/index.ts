@@ -65,6 +65,8 @@ import {
 } from "./store.js";
 import {
   LlamaCpp,
+  OpenAI,
+  type LLM,
 } from "./llm.js";
 import {
   setConfigSource,
@@ -368,15 +370,29 @@ export async function createStore(options: StoreOptions): Promise<QMDStore> {
   }
   // else: DB-only mode — no external config, use existing store_collections
 
-  // Create a per-store LlamaCpp instance — lazy-loads models on first use,
-  // auto-unloads after 5 min inactivity to free VRAM.
-  const llm = new LlamaCpp({
-    embedModel: config?.models?.embed,
-    generateModel: config?.models?.generate,
-    rerankModel: config?.models?.rerank,
-    inactivityTimeoutMs: 5 * 60 * 1000,
-    disposeModelsOnInactivity: true,
-  });
+  // Create a per-store LLM instance — choose between external API and local GGUF
+  let llm: LLM;
+  const externalBaseUrl = config?.models?.external_api?.base_url || process.env.QMD_EXTERNAL_API_BASE_URL;
+  if (externalBaseUrl) {
+    // Use external OpenAI-compatible API
+    llm = new OpenAI({
+      baseUrl: externalBaseUrl,
+      apiKey: config?.models?.external_api?.api_key || process.env.QMD_EXTERNAL_API_KEY || "dummy",
+      embedModel: config?.models?.embed || process.env.QMD_EMBED_MODEL,
+      generateModel: config?.models?.generate || process.env.QMD_GENERATE_MODEL,
+      rerankModel: config?.models?.rerank || process.env.QMD_RERANK_MODEL,
+      timeout: config?.models?.external_api?.timeout,
+    });
+  } else {
+    // Use local GGUF models via node-llama-cpp
+    llm = new LlamaCpp({
+      embedModel: config?.models?.embed,
+      generateModel: config?.models?.generate,
+      rerankModel: config?.models?.rerank,
+      inactivityTimeoutMs: 5 * 60 * 1000,
+      disposeModelsOnInactivity: true,
+    });
+  }
   internal.llm = llm;
 
   const store: QMDStore = {

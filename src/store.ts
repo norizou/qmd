@@ -21,7 +21,9 @@ import fastGlob from "fast-glob";
 import { qmdHomedir } from "./paths.js";
 import {
   LlamaCpp,
+  OpenAI,
   getDefaultLlamaCpp,
+  getDefaultLLM,
   formatQueryForEmbedding,
   formatDocForEmbedding,
   withLLMSessionForLlm,
@@ -30,6 +32,7 @@ import {
   DEFAULT_GENERATE_MODEL_URI,
   type RerankDocument,
   type ILLMSession,
+  type LLM,
 } from "./llm.js";
 import type {
   NamedCollection,
@@ -77,11 +80,11 @@ export function getEmbeddingFingerprint(model: string = DEFAULT_EMBED_MODEL): st
 }
 
 /**
- * Get the LlamaCpp instance for a store — prefers the store's own instance,
+ * Get the LLM instance for a store — prefers the store's own instance,
  * falls back to the global singleton.
  */
-function getLlm(store: Store): LlamaCpp {
-  return store.llm ?? getDefaultLlamaCpp();
+function getLlm(store: Store): LLM {
+  return store.llm ?? getDefaultLLM();
 }
 
 // =============================================================================
@@ -1176,8 +1179,8 @@ function ensureVecTableInternal(db: Database, dimensions: number): void {
 export type Store = {
   db: Database;
   dbPath: string;
-  /** Optional LlamaCpp instance for this store (overrides the global singleton) */
-  llm?: LlamaCpp;
+  /** Optional LLM instance for this store (overrides the global singleton) */
+  llm?: LLM;
   close: () => void;
   ensureVecTable: (dimensions: number) => void;
 
@@ -1611,7 +1614,6 @@ export async function generateEmbeddings(
     let bytesProcessed = 0;
     let totalChunks = 0;
     let vectorTableInitialized = false;
-    const BATCH_SIZE = 32;
     const RETRY_AFTER_SUCCESSFUL_CHUNKS = 64;
     const MAX_RETRY_ATTEMPTS = 3;
     const failures = new Map<string, EmbedFailure>();
@@ -1683,6 +1685,10 @@ export async function generateEmbeddings(
         return !!failure && failure.attempts < MAX_RETRY_ATTEMPTS;
       }));
     };
+
+    // Reduce batch size for external API to avoid 413 errors
+    const isExternalApi = llm instanceof OpenAI;
+    const BATCH_SIZE = isExternalApi ? 1 : 32;
     const batches = buildEmbeddingBatches(docsToEmbed, maxDocsPerBatch, maxBatchBytes);
 
     for (const batchMeta of batches) {
@@ -2658,7 +2664,34 @@ export async function chunkDocumentByTokens(
   chunkStrategy: ChunkStrategy = "regex",
   signal?: AbortSignal
 ): Promise<{ text: string; pos: number; tokens: number }[]> {
-  const llm = getDefaultLlamaCpp();
+  const llm = getDefaultLLM();
+
+  // Check if LLM has tokenize/detokenize methods (LlamaCpp has them, OpenAI doesn't)
+  const hasTokenize = 'tokenize' in llm && typeof (llm as any).tokenize === 'function';
+  const hasDetokenize = 'detokenize' in llm && typeof (llm as any).detokenize === 'function';
+
+  // For OpenAI (no tokenization), use character-based chunking directly with smaller chunks
+  if (!hasTokenize || !hasDetokenize) {
+    const isExternalApi = llm instanceof OpenAI;
+    // Use larger chunk size for external API with embeddinggemma-300m (2048 tokens)
+    // embeddinggemma-300m supports 2048 tokens (~1000-1500 Japanese chars)
+    // Use 800 tokens (~3200 chars) to be safe with margin
+    const avgCharsPerToken = 4;
+    const effectiveMaxTokens = isExternalApi ? 800 : maxTokens; // Increase to 800 tokens for external API
+    const effectiveOverlapTokens = isExternalApi ? Math.floor(effectiveMaxTokens * 0.15) : overlapTokens;
+    const effectiveWindowTokens = isExternalApi ? 150 : windowTokens;
+    const maxChars = effectiveMaxTokens * avgCharsPerToken;
+    const overlapChars = effectiveOverlapTokens * avgCharsPerToken;
+    const windowChars = effectiveWindowTokens * avgCharsPerToken;
+
+    let charChunks = await chunkDocumentAsync(content, maxChars, overlapChars, windowChars, filepath, chunkStrategy);
+    
+    return charChunks.map((chunk, i) => ({
+      text: chunk.text,
+      pos: chunk.pos,
+      tokens: Math.ceil(chunk.text.length / avgCharsPerToken),
+    }));
+  }
 
   // Use moderate chars/token estimate (prose ~4, code ~2, mixed ~3)
   // If chunks exceed limit, they'll be re-split with actual ratio
@@ -2681,7 +2714,7 @@ export async function chunkDocumentByTokens(
   const pushChunkWithinTokenLimit = async (text: string, pos: number): Promise<void> => {
     if (signal?.aborted) return;
 
-    const tokens = await llm.tokenize(text);
+    const tokens = await (llm as any).tokenize(text);
     if (tokens.length <= maxTokens || text.length <= 1) {
       results.push({ text, pos, tokens: tokens.length });
       return;
@@ -2718,7 +2751,7 @@ export async function chunkDocumentByTokens(
       || subChunks[0]?.text.length === text.length
     ) {
       const fallbackTokens = tokens.slice(0, Math.max(1, maxTokens));
-      const truncatedText = await llm.detokenize(fallbackTokens);
+      const truncatedText = await (llm as any).detokenize(fallbackTokens);
       results.push({
         text: truncatedText,
         pos,
@@ -3778,7 +3811,7 @@ function removeIncompleteEmbeddings(db: Database, expectedChunksByHash: Map<stri
 // Query expansion
 // =============================================================================
 
-export async function expandQuery(query: string, model: string = DEFAULT_QUERY_MODEL, db: Database, intent?: string, llmOverride?: LlamaCpp): Promise<ExpandedQuery[]> {
+export async function expandQuery(query: string, model: string = DEFAULT_QUERY_MODEL, db: Database, intent?: string, llmOverride?: LLM): Promise<ExpandedQuery[]> {
   // Check cache first — stored as JSON preserving types
   const cacheKey = getCacheKey("expandQuery", { query, model, ...(intent && { intent }) });
   const cached = getCachedResult(db, cacheKey);
@@ -3800,7 +3833,7 @@ export async function expandQuery(query: string, model: string = DEFAULT_QUERY_M
 
   const llm = llmOverride ?? getDefaultLlamaCpp();
   // Note: LlamaCpp uses hardcoded model, model parameter is ignored
-  const results = await llm.expandQuery(query, { intent });
+  const results = await llm.expandQuery(query, { context: intent });
 
   // Map Queryable[] → ExpandedQuery[] (same shape, decoupled from llm.ts internals).
   // Filter out entries that duplicate the original query text.
@@ -3819,7 +3852,7 @@ export async function expandQuery(query: string, model: string = DEFAULT_QUERY_M
 // Reranking
 // =============================================================================
 
-export async function rerank(query: string, documents: { file: string; text: string }[], model: string = DEFAULT_RERANK_MODEL, db: Database, intent?: string, llmOverride?: LlamaCpp): Promise<{ file: string; score: number }[]> {
+export async function rerank(query: string, documents: { file: string; text: string }[], model: string = DEFAULT_RERANK_MODEL, db: Database, intent?: string, llmOverride?: LLM): Promise<{ file: string; score: number }[]> {
   // Prepend intent to rerank query so the reranker scores with domain context
   const rerankQuery = intent ? `${intent}\n\n${query}` : query;
 

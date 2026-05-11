@@ -74,6 +74,7 @@ qmd get "docs/api-reference.md" --full
 Although the tool works perfectly fine when you just tell your agent to use it on the command line, it also exposes an MCP (Model Context Protocol) server for tighter integration.
 
 **Tools exposed:**
+
 - `query` — Search with typed sub-queries (`lex`/`vec`/`hyde`), combined via RRF + reranking
 - `get` — Retrieve a document by path or docid (with fuzzy matching suggestions)
 - `multi_get` — Batch retrieve by glob pattern, comma-separated list, or docids
@@ -128,6 +129,7 @@ qmd status                        # shows "MCP: running (PID ...)" when active
 ```
 
 The HTTP server exposes two endpoints:
+
 - `POST /mcp` — MCP Streamable HTTP (JSON responses, stateless)
 - `GET /health` — liveness check with uptime
 
@@ -172,21 +174,21 @@ npm install @tobilu/qmd
 #### Quick Start
 
 ```typescript
-import { createStore } from '@tobilu/qmd'
+import { createStore } from "@tobilu/qmd";
 
 const store = await createStore({
-  dbPath: './my-index.sqlite',
+  dbPath: "./my-index.sqlite",
   config: {
     collections: {
-      docs: { path: '/path/to/docs', pattern: '**/*.md' },
+      docs: { path: "/path/to/docs", pattern: "**/*.md" },
     },
   },
-})
+});
 
-const results = await store.search({ query: "authentication flow" })
-console.log(results.map(r => `${r.title} (${Math.round(r.score * 100)}%)`))
+const results = await store.search({ query: "authentication flow" });
+console.log(results.map((r) => `${r.title} (${Math.round(r.score * 100)}%)`));
 
-await store.close()
+await store.close();
 ```
 
 #### Store Creation
@@ -194,27 +196,27 @@ await store.close()
 `createStore()` accepts three modes:
 
 ```typescript
-import { createStore } from '@tobilu/qmd'
+import { createStore } from "@tobilu/qmd";
 
 // 1. Inline config — no files needed besides the DB
 const store = await createStore({
-  dbPath: './index.sqlite',
+  dbPath: "./index.sqlite",
   config: {
     collections: {
-      docs: { path: '/path/to/docs', pattern: '**/*.md' },
-      notes: { path: '/path/to/notes' },
+      docs: { path: "/path/to/docs", pattern: "**/*.md" },
+      notes: { path: "/path/to/notes" },
     },
   },
-})
+});
 
 // 2. YAML config file — collections defined in a file
 const store2 = await createStore({
-  dbPath: './index.sqlite',
-  configPath: './qmd.yml',
-})
+  dbPath: "./index.sqlite",
+  configPath: "./qmd.yml",
+});
 
 // 3. DB-only — reopen a previously configured store
-const store3 = await createStore({ dbPath: './index.sqlite' })
+const store3 = await createStore({ dbPath: "./index.sqlite" });
 ```
 
 #### Search
@@ -223,7 +225,7 @@ The unified `search()` method handles both simple queries and pre-expanded struc
 
 ```typescript
 // Simple query — auto-expanded via LLM, then BM25 + vector + reranking
-const results = await store.search({ query: "authentication flow" })
+const results = await store.search({ query: "authentication flow" });
 
 // With options
 const results2 = await store.search({
@@ -233,56 +235,56 @@ const results2 = await store.search({
   limit: 5,
   minScore: 0.3,
   explain: true,
-})
+});
 
 // Pre-expanded queries — skip auto-expansion, control each sub-query
 const results3 = await store.search({
   queries: [
-    { type: 'lex', query: '"connection pool" timeout -redis' },
-    { type: 'vec', query: 'why do database connections time out under load' },
+    { type: "lex", query: '"connection pool" timeout -redis' },
+    { type: "vec", query: "why do database connections time out under load" },
   ],
   collections: ["docs", "notes"],
-})
+});
 
 // Skip reranking for faster results
-const fast = await store.search({ query: "auth", rerank: false })
+const fast = await store.search({ query: "auth", rerank: false });
 ```
 
 For direct backend access:
 
 ```typescript
 // BM25 keyword search (fast, no LLM)
-const lexResults = await store.searchLex("auth middleware", { limit: 10 })
+const lexResults = await store.searchLex("auth middleware", { limit: 10 });
 
 // Vector similarity search (embedding model, no reranking)
-const vecResults = await store.searchVector("how users log in", { limit: 10 })
+const vecResults = await store.searchVector("how users log in", { limit: 10 });
 
 // Manual query expansion for full control
-const expanded = await store.expandQuery("auth flow", { intent: "user login" })
-const results4 = await store.search({ queries: expanded })
+const expanded = await store.expandQuery("auth flow", { intent: "user login" });
+const results4 = await store.search({ queries: expanded });
 ```
 
 #### Retrieval
 
 ```typescript
 // Get a document by path or docid
-const doc = await store.get("docs/readme.md")
-const byId = await store.get("#abc123")
+const doc = await store.get("docs/readme.md");
+const byId = await store.get("#abc123");
 
 if (!("error" in doc)) {
-  console.log(doc.title, doc.displayPath, doc.context)
+  console.log(doc.title, doc.displayPath, doc.context);
 }
 
 // Get document body with line range
 const body = await store.getDocumentBody("docs/readme.md", {
   fromLine: 50,
   maxLines: 100,
-})
+});
 
 // Batch retrieve by glob or comma-separated list
 const { docs, errors } = await store.multiGet("docs/**/*.md", {
   maxBytes: 20480,
-})
+});
 ```
 
 #### Collections
@@ -293,18 +295,18 @@ await store.addCollection("myapp", {
   path: "/src/myapp",
   pattern: "**/*.ts",
   ignore: ["node_modules/**", "*.test.ts"],
-})
+});
 
 // List collections with document stats
-const collections = await store.listCollections()
+const collections = await store.listCollections();
 // => [{ name, pwd, glob_pattern, doc_count, active_count, last_modified, includeByDefault }]
 
 // Get names of collections included in queries by default
-const defaults = await store.getDefaultCollectionNames()
+const defaults = await store.getDefaultCollectionNames();
 
 // Remove / rename
-await store.removeCollection("myapp")
-await store.renameCollection("old-name", "new-name")
+await store.removeCollection("myapp");
+await store.renameCollection("old-name", "new-name");
 ```
 
 #### Context
@@ -313,18 +315,18 @@ Context adds descriptive metadata that improves search relevance and is returned
 
 ```typescript
 // Add context for a path within a collection
-await store.addContext("docs", "/api", "REST API reference documentation")
+await store.addContext("docs", "/api", "REST API reference documentation");
 
 // Set global context (applies to all collections)
-await store.setGlobalContext("Internal engineering documentation")
+await store.setGlobalContext("Internal engineering documentation");
 
 // List all contexts
-const contexts = await store.listContexts()
+const contexts = await store.listContexts();
 // => [{ collection, path, context }]
 
 // Remove context
-await store.removeContext("docs", "/api")
-await store.setGlobalContext(undefined)  // clear global
+await store.removeContext("docs", "/api");
+await store.setGlobalContext(undefined); // clear global
 ```
 
 #### Indexing
@@ -332,21 +334,21 @@ await store.setGlobalContext(undefined)  // clear global
 ```typescript
 // Re-index collections by scanning the filesystem
 const result = await store.update({
-  collections: ["docs"],  // optional — defaults to all
+  collections: ["docs"], // optional — defaults to all
   onProgress: ({ collection, file, current, total }) => {
-    console.log(`[${collection}] ${current}/${total} ${file}`)
+    console.log(`[${collection}] ${current}/${total} ${file}`);
   },
-})
+});
 // => { collections, indexed, updated, unchanged, removed, needsEmbedding }
 
 // Generate vector embeddings
 const embedResult = await store.embed({
-  force: false,           // true to re-embed everything
-  chunkStrategy: "auto",  // "regex" (default) or "auto" (AST for code files)
+  force: false, // true to re-embed everything
+  chunkStrategy: "auto", // "regex" (default) or "auto" (AST for code files)
   onProgress: ({ current, total, collection }) => {
-    console.log(`Embedding ${current}/${total}`)
+    console.log(`Embedding ${current}/${total}`);
   },
-})
+});
 ```
 
 #### Types
@@ -355,43 +357,43 @@ Key types exported for SDK consumers:
 
 ```typescript
 import type {
-  QMDStore,            // The store interface
-  SearchOptions,       // Options for search()
-  LexSearchOptions,    // Options for searchLex()
+  QMDStore, // The store interface
+  SearchOptions, // Options for search()
+  LexSearchOptions, // Options for searchLex()
   VectorSearchOptions, // Options for searchVector()
-  HybridQueryResult,   // Search result with score, snippet, context
-  SearchResult,        // Result from searchLex/searchVector
-  ExpandedQuery,       // Typed sub-query { type: 'lex'|'vec'|'hyde', query }
-  DocumentResult,      // Document metadata + body
-  DocumentNotFound,    // Error with similarFiles suggestions
-  MultiGetResult,      // Batch retrieval result
-  UpdateProgress,      // Progress callback info for update()
-  UpdateResult,        // Aggregated update result
-  EmbedProgress,       // Progress callback info for embed()
-  EmbedResult,         // Embedding result
-  StoreOptions,        // createStore() options
-  CollectionConfig,    // Inline config shape
-  IndexStatus,         // From getStatus()
-  IndexHealthInfo,     // From getIndexHealth()
-} from '@tobilu/qmd'
+  HybridQueryResult, // Search result with score, snippet, context
+  SearchResult, // Result from searchLex/searchVector
+  ExpandedQuery, // Typed sub-query { type: 'lex'|'vec'|'hyde', query }
+  DocumentResult, // Document metadata + body
+  DocumentNotFound, // Error with similarFiles suggestions
+  MultiGetResult, // Batch retrieval result
+  UpdateProgress, // Progress callback info for update()
+  UpdateResult, // Aggregated update result
+  EmbedProgress, // Progress callback info for embed()
+  EmbedResult, // Embedding result
+  StoreOptions, // createStore() options
+  CollectionConfig, // Inline config shape
+  IndexStatus, // From getStatus()
+  IndexHealthInfo, // From getIndexHealth()
+} from "@tobilu/qmd";
 ```
 
 Utility exports:
 
 ```typescript
 import {
-  extractSnippet,              // Extract a relevant snippet from text
-  addLineNumbers,              // Add line numbers to text
+  extractSnippet, // Extract a relevant snippet from text
+  addLineNumbers, // Add line numbers to text
   DEFAULT_MULTI_GET_MAX_BYTES, // Default max file size for multiGet (10KB)
-  Maintenance,                 // Database maintenance operations
-} from '@tobilu/qmd'
+  Maintenance, // Database maintenance operations
+} from "@tobilu/qmd";
 ```
 
 #### Lifecycle
 
 ```typescript
 // Close the store — disposes LLM models and DB connection
-await store.close()
+await store.close();
 ```
 
 The SDK requires explicit `dbPath` — no defaults are assumed. This makes it safe to embed in any application without side effects.
@@ -462,11 +464,11 @@ The SDK requires explicit `dbPath` — no defaults are assumed. This makes it sa
 
 ### Search Backends
 
-| Backend | Raw Score | Conversion | Range |
-|---------|-----------|------------|-------|
-| **FTS (BM25)** | SQLite FTS5 BM25 | `Math.abs(score)` | 0 to ~25+ |
-| **Vector** | Cosine distance | `1 / (1 + distance)` | 0.0 to 1.0 |
-| **Reranker** | LLM 0-10 rating | `score / 10` | 0.0 to 1.0 |
+| Backend        | Raw Score        | Conversion           | Range      |
+| -------------- | ---------------- | -------------------- | ---------- |
+| **FTS (BM25)** | SQLite FTS5 BM25 | `Math.abs(score)`    | 0 to ~25+  |
+| **Vector**     | Cosine distance  | `1 / (1 + distance)` | 0.0 to 1.0 |
+| **Reranker**   | LLM 0-10 rating  | `score / 10`         | 0.0 to 1.0 |
 
 ### Fusion Strategy
 
@@ -487,12 +489,12 @@ The `query` command uses **Reciprocal Rank Fusion (RRF)** with position-aware bl
 
 ### Score Interpretation
 
-| Score | Meaning |
-|-------|---------|
-| 0.8 - 1.0 | Highly relevant |
+| Score     | Meaning             |
+| --------- | ------------------- |
+| 0.8 - 1.0 | Highly relevant     |
 | 0.5 - 0.8 | Moderately relevant |
-| 0.2 - 0.5 | Somewhat relevant |
-| 0.0 - 0.2 | Low relevance |
+| 0.2 - 0.5 | Somewhat relevant   |
+| 0.0 - 0.2 | Low relevance       |
 
 ## Requirements
 
@@ -509,10 +511,10 @@ The `query` command uses **Reciprocal Rank Fusion (RRF)** with position-aware bl
 
 QMD uses three local GGUF models (auto-downloaded on first use):
 
-| Model | Purpose | Size |
-|-------|---------|------|
-| `embeddinggemma-300M-Q8_0` | Vector embeddings (default) | ~300MB |
-| `qwen3-reranker-0.6b-q8_0` | Re-ranking | ~640MB |
+| Model                             | Purpose                      | Size   |
+| --------------------------------- | ---------------------------- | ------ |
+| `embeddinggemma-300M-Q8_0`        | Vector embeddings (default)  | ~300MB |
+| `qwen3-reranker-0.6b-q8_0`        | Re-ranking                   | ~640MB |
 | `qmd-query-expansion-1.7B-q4_k_m` | Query expansion (fine-tuned) | ~1.1GB |
 
 Models are downloaded from HuggingFace and cached in `~/.cache/qmd/models/`.
@@ -532,12 +534,85 @@ qmd embed -f
 ```
 
 Supported model families:
+
 - **embeddinggemma** (default) — English-optimized, small footprint
 - **Qwen3-Embedding** — Multilingual (119 languages including CJK), MTEB top-ranked
 
 > **Note:** When switching embedding models, you must re-index with `qmd embed -f`
 > since vectors are not cross-compatible between models. The prompt format is
 > automatically adjusted for each model family.
+
+### External API Configuration
+
+QMD can use external OpenAI-compatible APIs instead of local GGUF models for embeddings, generation, and reranking. This is useful when you have a powerful external LLM service (e.g., OpenWebUI, vLLM, or any OpenAI-compatible server).
+
+#### Configuration via YAML
+
+Add an `external_api` section to your `index.yml`:
+
+```yaml
+models:
+  embed: multilingual-e5-large-instruct
+  generate: gemma-3-27b-it
+  rerank: mmarco-mminilmv2-l12-h384-v1
+  external_api:
+    base_url: http://localhost:3000/api # or ~/container/open-webui/aia-proxy
+    api_key: dummy # optional, defaults to "dummy"
+    timeout: 30000 # optional, request timeout in ms (default: 30000)
+```
+
+When `external_api.base_url` is set, QMD will use the external API for all LLM operations instead of local GGUF models.
+
+#### Configuration via Environment Variables
+
+You can also configure the external API using environment variables:
+
+```sh
+export QMD_EXTERNAL_API_BASE_URL="http://localhost:3000/api"
+export QMD_EXTERNAL_API_KEY="dummy"  # optional
+export QMD_EMBED_MODEL="multilingual-e5-large-instruct"
+export QMD_GENERATE_MODEL="gemma-3-27b-it"
+export QMD_RERANK_MODEL="mmarco-mminilmv2-l12-h384-v1"
+```
+
+#### API Endpoints
+
+The external API must support the following OpenAI-compatible endpoints:
+
+- **Embeddings**: `POST /v1/embeddings` - Returns embeddings for text
+- **Chat Completions**: `POST /v1/chat/completions` - Used for generation and query expansion
+- **Rerank**: `POST /v1/rerank` - Optional, for document reranking. Falls back to chat completions if not available.
+- **Models**: `GET /v1/models` - Optional, for model availability checking
+
+#### Example with OpenWebUI
+
+If you're using OpenWebUI with the aia-proxy:
+
+```yaml
+models:
+  external_api:
+    base_url: ~/container/open-webui/aia-proxy
+    api_key: dummy
+```
+
+Or via environment variables:
+
+```sh
+export QMD_EXTERNAL_API_BASE_URL="~/container/open-webui/aia-proxy"
+```
+
+#### Checking Backend Status
+
+Run `qmd status` with device probing enabled to see which backend is active:
+
+```sh
+QMD_STATUS_DEVICE_PROBE=1 qmd status
+```
+
+Output will show:
+
+- `Backend: External API (model-name)` for external API
+- `Backend: Local GGUF` with GPU/CPU details for local models
 
 ## Installation
 
@@ -772,6 +847,7 @@ export QMD_EDITOR_URI="subl://open?url=file://{path}&line={line}"
 ```
 
 Template placeholders:
+
 - `{path}` absolute filesystem path (URI-encoded)
 - `{line}` 1-based line number
 - `{col}` or `{column}` 1-based column number
@@ -964,12 +1040,12 @@ llm_cache       -- Cached LLM responses (query expansion, rerank scores)
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `XDG_CACHE_HOME` | `~/.cache` | Cache directory location |
-| `QMD_LLAMA_GPU` | `auto` | Force llama.cpp GPU backend (`metal`, `vulkan`, `cuda`) or disable GPU with `false` |
-| `QMD_FORCE_CPU` | unset | Set to `1`/`true` to force CPU mode before any CUDA/Vulkan/Metal probing. Equivalent CLI flag: `--no-gpu`. |
-| `QMD_EMBED_PARALLELISM` | automatic | Override embedding/reranking context parallelism (1-8). Windows CUDA defaults to `1` because parallel CUDA contexts can crash with `ggml-cuda.cu:98`; use Vulkan or raise this only if your driver is stable. |
+| Variable                | Default    | Description                                                                                                                                                                                                   |
+| ----------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `XDG_CACHE_HOME`        | `~/.cache` | Cache directory location                                                                                                                                                                                      |
+| `QMD_LLAMA_GPU`         | `auto`     | Force llama.cpp GPU backend (`metal`, `vulkan`, `cuda`) or disable GPU with `false`                                                                                                                           |
+| `QMD_FORCE_CPU`         | unset      | Set to `1`/`true` to force CPU mode before any CUDA/Vulkan/Metal probing. Equivalent CLI flag: `--no-gpu`.                                                                                                    |
+| `QMD_EMBED_PARALLELISM` | automatic  | Override embedding/reranking context parallelism (1-8). Windows CUDA defaults to `1` because parallel CUDA contexts can crash with `ggml-cuda.cu:98`; use Vulkan or raise this only if your driver is stable. |
 
 ## How It Works
 
@@ -1008,19 +1084,19 @@ Instead of cutting at hard token boundaries, QMD uses a scoring algorithm to fin
 
 **Break Point Scores:**
 
-| Pattern | Score | Description |
-|---------|-------|-------------|
-| `# Heading` | 100 | H1 - major section |
-| `## Heading` | 90 | H2 - subsection |
-| `### Heading` | 80 | H3 |
-| `#### Heading` | 70 | H4 |
-| `##### Heading` | 60 | H5 |
-| `###### Heading` | 50 | H6 |
-| ` ``` ` | 80 | Code block boundary |
-| `---` / `***` | 60 | Horizontal rule |
-| Blank line | 20 | Paragraph boundary |
-| `- item` / `1. item` | 5 | List item |
-| Line break | 1 | Minimal break |
+| Pattern              | Score | Description         |
+| -------------------- | ----- | ------------------- |
+| `# Heading`          | 100   | H1 - major section  |
+| `## Heading`         | 90    | H2 - subsection     |
+| `### Heading`        | 80    | H3                  |
+| `#### Heading`       | 70    | H4                  |
+| `##### Heading`      | 60    | H5                  |
+| `###### Heading`     | 50    | H6                  |
+| ` ``` `              | 80    | Code block boundary |
+| `---` / `***`        | 60    | Horizontal rule     |
+| Blank line           | 20    | Paragraph boundary  |
+| `- item` / `1. item` | 5     | List item           |
+| Line break           | 1     | Minimal break       |
 
 **Algorithm:**
 
@@ -1037,12 +1113,12 @@ The squared distance decay means a heading 200 tokens back (score ~30) still bea
 
 For supported code files, QMD also parses the source with [tree-sitter](https://tree-sitter.github.io/) and adds AST-derived break points that are merged with the regex scores above:
 
-| AST Node | Score | Languages |
-|----------|-------|-----------|
-| Class / interface / struct / impl / trait | 100 | All |
-| Function / method | 90 | All |
-| Type alias / enum | 80 | All |
-| Import / use declaration | 60 | All |
+| AST Node                                  | Score | Languages |
+| ----------------------------------------- | ----- | --------- |
+| Class / interface / struct / impl / trait | 100   | All       |
+| Function / method                         | 90    | All       |
+| Type alias / enum                         | 80    | All       |
+| Import / use declaration                  | 60    | All       |
 
 Supported for `.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.go`, and `.rs` files. Enable with `--chunk-strategy auto`. Markdown and other file types always use regex chunking.
 
@@ -1089,9 +1165,12 @@ Query ──► LLM Expansion ──► [Original, Variant 1, Variant 2]
 Models are configured in `src/llm.ts` as HuggingFace URIs:
 
 ```typescript
-const DEFAULT_EMBED_MODEL = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
-const DEFAULT_RERANK_MODEL = "hf:ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF/qwen3-reranker-0.6b-q8_0.gguf";
-const DEFAULT_GENERATE_MODEL = "hf:tobil/qmd-query-expansion-1.7B-gguf/qmd-query-expansion-1.7B-q4_k_m.gguf";
+const DEFAULT_EMBED_MODEL =
+  "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
+const DEFAULT_RERANK_MODEL =
+  "hf:ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF/qwen3-reranker-0.6b-q8_0.gguf";
+const DEFAULT_GENERATE_MODEL =
+  "hf:tobil/qmd-query-expansion-1.7B-gguf/qmd-query-expansion-1.7B-q4_k_m.gguf";
 ```
 
 ### EmbeddingGemma Prompt Format

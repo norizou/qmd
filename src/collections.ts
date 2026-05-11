@@ -34,12 +34,22 @@ export interface Collection {
 }
 
 /**
+ * External API configuration for OpenAI-compatible endpoints
+ */
+export interface ExternalApiConfig {
+  base_url: string;           // e.g., "http://localhost:3000/api"
+  api_key?: string;          // Optional (defaults to "dummy")
+  timeout?: number;          // Request timeout in ms (default: 30000)
+}
+
+/**
  * Model configuration for embedding, reranking, and generation
  */
 export interface ModelsConfig {
   embed?: string;
   rerank?: string;
   generate?: string;
+  external_api?: ExternalApiConfig;  // External API configuration
 }
 
 /**
