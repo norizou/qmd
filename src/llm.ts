@@ -793,7 +793,19 @@ export class OpenAI implements LLM {
       
       if (result && result.text) {
         try {
-          const parsed = JSON.parse(result.text) as Array<{ index: number; score: number }>;
+          // Strip markdown code blocks if present
+          let jsonText = result.text.trim();
+          if (jsonText.startsWith('```json')) {
+            jsonText = jsonText.slice(7);
+          } else if (jsonText.startsWith('```')) {
+            jsonText = jsonText.slice(3);
+          }
+          if (jsonText.endsWith('```')) {
+            jsonText = jsonText.slice(0, -3);
+          }
+          jsonText = jsonText.trim();
+
+          const parsed = JSON.parse(jsonText) as Array<{ index: number; score: number }>;
           return {
             results: parsed.map((r) => ({
               file: documents[r.index]?.file || '',
