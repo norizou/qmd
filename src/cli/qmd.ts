@@ -2453,8 +2453,16 @@ function outputResults(results: OutputRow[], query: string, opts: OutputOptions)
         console.log(`${c.dim}Explain: fts=[${ftsScores}] vec=[${vecScores}]${c.reset}`);
         console.log(`${c.dim}  RRF: total=${formatExplainNumber(explain.rrf.totalScore)} base=${formatExplainNumber(explain.rrf.baseScore)} bonus=${formatExplainNumber(explain.rrf.topRankBonus)} rank=${explain.rrf.rank}${c.reset}`);
         console.log(`${c.dim}  Blend: ${Math.round(explain.rrf.weight * 100)}%*${formatExplainNumber(explain.rrf.positionScore)} + ${Math.round((1 - explain.rrf.weight) * 100)}%*${formatExplainNumber(explain.rerankScore)} = ${formatExplainNumber(explain.blendedScore)}${c.reset}`);
-        if (contribSummary.length > 0) {
-          console.log(`${c.dim}  Top RRF contributions: ${contribSummary}${c.reset}`);
+        
+        // Show detailed RRF contributions with formula breakdown
+        console.log(`${c.dim}  RRF contributions (k=60):${c.reset}`);
+        const sortedContribs = explain.rrf.contributions
+          .slice()
+          .sort((a, b) => b.rrfContribution - a.rrfContribution);
+        for (const contrib of sortedContribs) {
+          const k = 60;
+          const formula = `${contrib.weight.toFixed(1)} / (${k} + ${contrib.rank}) = ${formatExplainNumber(contrib.rrfContribution)}`;
+          console.log(`${c.dim}    ${contrib.source}/${contrib.queryType}#${contrib.rank}: ${formula} (backend: ${formatExplainNumber(contrib.backendScore)})${c.reset}`);
         }
       }
       console.log();
