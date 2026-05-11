@@ -604,7 +604,7 @@ export class OpenAI implements LLM {
     const input = options?.isQuery ? formatQueryForEmbedding(text, model) : formatDocForEmbedding(text, options?.title, model);
 
     try {
-      const response = await this.fetchWithTimeout('/embeddings', {
+      const response = await this.fetchWithTimeout('/v1/embeddings', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -642,7 +642,7 @@ export class OpenAI implements LLM {
     );
 
     try {
-      const response = await this.fetchWithTimeout('/embeddings', {
+      const response = await this.fetchWithTimeout('/v1/embeddings', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -678,7 +678,7 @@ export class OpenAI implements LLM {
 
     // Open WebUI uses /api/chat/completions (OpenAI compatible)
     try {
-      const response = await this.fetchWithTimeout('/chat/completions', {
+      const response = await this.fetchWithTimeout('/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -711,9 +711,10 @@ export class OpenAI implements LLM {
   }
 
   async modelExists(model: string): Promise<ModelInfo> {
-    // For external API, we assume the model exists if we can reach the endpoint
+    // For external APIs, we can't easily check if a model exists without trying it
+    // Assume the model exists if we can reach the API
     try {
-      const response = await this.fetchWithTimeout('/models', {
+      const response = await this.fetchWithTimeout('/v1/models', {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,

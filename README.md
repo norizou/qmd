@@ -544,7 +544,7 @@ Supported model families:
 
 ### External API Configuration
 
-QMD can use external OpenAI-compatible APIs instead of local GGUF models for embeddings, generation, and reranking. This is useful when you have a powerful external LLM service (e.g., OpenWebUI, vLLM, or any OpenAI-compatible server).
+QMD can use external OpenAI-compatible APIs instead of local GGUF models for embeddings, generation, and reranking. This is useful when you have a powerful external LLM service (e.g., Dell AIA Gateway via aia-proxy, OpenWebUI, vLLM, or any OpenAI-compatible server).
 
 #### Configuration via YAML
 
@@ -552,12 +552,12 @@ Add an `external_api` section to your `index.yml`:
 
 ```yaml
 models:
-  embed: multilingual-e5-large-instruct
+  embed: embeddinggemma-300m
   generate: gemma-3-27b-it
   rerank: mmarco-mminilmv2-l12-h384-v1
   external_api:
-    base_url: http://localhost:3000/api # or ~/container/open-webui/aia-proxy
-    api_key: dummy # optional, defaults to "dummy"
+    base_url: http://localhost:11434 # aia-proxy endpoint
+    api_key: dummy # optional, any value works with aia-proxy
     timeout: 30000 # optional, request timeout in ms (default: 30000)
 ```
 
@@ -568,9 +568,9 @@ When `external_api.base_url` is set, QMD will use the external API for all LLM o
 You can also configure the external API using environment variables:
 
 ```sh
-export QMD_EXTERNAL_API_BASE_URL="http://localhost:3000/api"
+export QMD_EXTERNAL_API_BASE_URL="http://localhost:11434"
 export QMD_EXTERNAL_API_KEY="dummy"  # optional
-export QMD_EMBED_MODEL="multilingual-e5-large-instruct"
+export QMD_EMBED_MODEL="embeddinggemma-300m"
 export QMD_GENERATE_MODEL="gemma-3-27b-it"
 export QMD_RERANK_MODEL="mmarco-mminilmv2-l12-h384-v1"
 ```
@@ -584,22 +584,24 @@ The external API must support the following OpenAI-compatible endpoints:
 - **Rerank**: `POST /v1/rerank` - Optional, for document reranking. Falls back to chat completions if not available.
 - **Models**: `GET /v1/models` - Optional, for model availability checking
 
-#### Example with OpenWebUI
+#### Using with Dell AIA Proxy
 
-If you're using OpenWebUI with the aia-proxy:
+The aia-proxy provides transparent OAuth2 authentication for Dell AIA Gateway. Setup:
 
 ```yaml
 models:
   external_api:
-    base_url: ~/container/open-webui/aia-proxy
-    api_key: dummy
+    base_url: http://localhost:11434 # aia-proxy default port
+    api_key: dummy # any value works
 ```
 
 Or via environment variables:
 
 ```sh
-export QMD_EXTERNAL_API_BASE_URL="~/container/open-webui/aia-proxy"
+export QMD_EXTERNAL_API_BASE_URL="http://localhost:11434"
 ```
+
+For aia-proxy setup instructions, see: `~/container/open-webui/aia-proxy/README.md`
 
 #### Checking Backend Status
 
