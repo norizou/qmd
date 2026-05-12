@@ -2,6 +2,9 @@
 title: AIA-Proxy Integration Documentation
 description: Complete documentation of QMD integration with Dell AIA Gateway via aia-proxy, including problem statement, solution exploration, implementation details, and testing results.
 date: 2026-05-12
+authors:
+  - Cascade (AI Assistant)
+  - gemma-3-27b-it (via aia-proxy)
 tags:
   - aia-proxy
   - dell-aia-gateway
