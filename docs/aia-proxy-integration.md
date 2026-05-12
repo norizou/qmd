@@ -4,12 +4,12 @@ description: Complete documentation of QMD integration with Dell AIA Gateway via
 date: 2026-05-12
 coauthors:
   - Cascade (SWE-1.6 AI Assistant)
-  - gemma-3-27b-it (via aia-proxy)
 tags:
   - aia-proxy
   - dell-aia-gateway
   - integration
   - documentation
+  - qmd
 ---
 
 ## Overview
