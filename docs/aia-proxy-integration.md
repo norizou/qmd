@@ -1,4 +1,13 @@
-# AIA-Proxy Integration Documentation
+---
+title: AIA-Proxy Integration Documentation
+description: Complete documentation of QMD integration with Dell AIA Gateway via aia-proxy, including problem statement, solution exploration, implementation details, and testing results.
+date: 2026-05-12
+tags:
+  - aia-proxy
+  - dell-aia-gateway
+  - integration
+  - documentation
+---
 
 ## Overview
 
@@ -7,26 +16,31 @@ This document describes the process of integrating QMD with Dell AIA Gateway via
 ## Problem Statement
 
 ### Initial Issue
+
 QMD was configured to use Open WebUI's external API for LLM operations (embeddings, generation, and reranking). However, the `/api/chat/completions` endpoint was returning a server-side error:
 
-```
+```text
 'coroutine' object is not iterable
 ```
 
 This error prevented generation and reranking operations from working correctly, making the external API integration unusable for production use.
 
 ### Root Cause
+
 The error was a server-side issue in Open WebUI's implementation of the `/api/chat/completions` endpoint, which QMD could not fix directly. This prompted the need for an alternative access method to the LLM models.
 
 ## Solution Exploration
 
 ### Alternative Options Considered
+
 1. **Fix Open WebUI server-side error** - Not feasible as it's a third-party server issue
 2. **Use direct OpenAI API** - Would require external API keys and internet access
 3. **Use aia-proxy** - Transparent proxy for Dell AIA Gateway with OAuth2 authentication
 
 ### Decision: aia-proxy
+
 aia-proxy was selected because:
+
 - Provides transparent OAuth2 authentication for Dell AIA Gateway
 - Exposes OpenAI-compatible API endpoints
 - Runs locally (`http://localhost:11434`)
@@ -38,18 +52,20 @@ aia-proxy was selected because:
 ### Configuration Changes
 
 #### 1. Update `~/.config/qmd/index.yml`
+
 ```yaml
 models:
   embed: embeddinggemma-300m
   generate: gemma-3-27b-it
   rerank: mmarco-mminilmv2-l12-h384-v1
   external_api:
-    base_url: http://localhost:11434  # Changed from http://localhost:3000/api
-    api_key: dummy  # Changed from actual API key
+    base_url: http://localhost:11434 # Changed from http://localhost:3000/api
+    api_key: dummy # Changed from actual API key
     timeout: 30000
 ```
 
 **Key Changes:**
+
 - Base URL changed to aia-proxy endpoint (without `/v1` suffix)
 - API key set to dummy value (aia-proxy handles authentication internally)
 
@@ -74,6 +90,7 @@ modelExists() → '/v1/models'
 ### Code Changes
 
 #### 1. Embedding Endpoint
+
 ```typescript
 async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult | null> {
   const response = await this.fetchWithTimeout('/v1/embeddings', {
@@ -92,6 +109,7 @@ async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult | nul
 ```
 
 #### 2. Generation Endpoint
+
 ```typescript
 async generate(prompt: string, options?: GenerateOptions): Promise<GenerateResult | null> {
   // Try chat completions first (OpenAI standard)
@@ -117,13 +135,14 @@ async generate(prompt: string, options?: GenerateOptions): Promise<GenerateResul
 ```
 
 #### 3. Rerank JSON Parsing Fix
+
 aia-proxy's model returns JSON wrapped in markdown code blocks. Added stripping logic:
 
-```typescript
+````typescript
 async rerank(query: string, documents: RerankDocument[], options?: RerankOptions): Promise<RerankResult> {
   // ... prompt generation
   const result = await this.generate(prompt, { maxTokens: 512, temperature: 0.1 });
-  
+
   if (result && result.text) {
     try {
       // Strip markdown code blocks if present
@@ -146,7 +165,7 @@ async rerank(query: string, documents: RerankDocument[], options?: RerankOptions
   }
   // ... fallback
 }
-```
+````
 
 ### Additional Enhancement: RRF Explain Output
 
@@ -161,12 +180,15 @@ const sortedContribs = explain.rrf.contributions
 for (const contrib of sortedContribs) {
   const k = 60;
   const formula = `${contrib.weight.toFixed(1)} / (${k} + ${contrib.rank}) = ${formatExplainNumber(contrib.rrfContribution)}`;
-  console.log(`${c.dim}    ${contrib.source}/${contrib.queryType}#${contrib.rank}: ${formula} (backend: ${formatExplainNumber(contrib.backendScore)})${c.reset}`);
+  console.log(
+    `${c.dim}    ${contrib.source}/${contrib.queryType}#${contrib.rank}: ${formula} (backend: ${formatExplainNumber(contrib.backendScore)})${c.reset}`,
+  );
 }
 ```
 
 **Output Example:**
-```
+
+```text
 RRF contributions (k=60):
   vec/original#1: 2.0 / (60 + 1) = 0.0328 (backend: 0.6291)
   vec/original#2: 2.0 / (60 + 2) = 0.0323 (backend: 0.6246)
@@ -175,6 +197,7 @@ RRF contributions (k=60):
 ## Testing
 
 ### 1. Embeddings Test
+
 ```bash
 curl http://localhost:11434/v1/embeddings \
   -H "Content-Type: application/json" \
@@ -184,9 +207,11 @@ curl http://localhost:11434/v1/embeddings \
     "input": "test text"
   }'
 ```
+
 **Result:** Success - returned embeddings with correct dimensions (2048)
 
 ### 2. Generation Test
+
 ```bash
 curl http://localhost:11434/v1/chat/completions \
   -H "Content-Type: application/json" \
@@ -197,24 +222,31 @@ curl http://localhost:11434/v1/chat/completions \
     "max_tokens": 100
   }'
 ```
+
 **Result:** Success - returned generated text
 
 ### 3. QMD Embed Command
+
 ```bash
 qmd embed --force
 ```
+
 **Result:** Success - embedded documents using aia-proxy
 
 ### 4. QMD Query Command
+
 ```bash
 qmd query "検索クエリ" --explain
 ```
+
 **Result:** Success - returned search results with RRF breakdown
 
 ### 5. Intent Option Test
+
 ```bash
 qmd query "検索クエリ" --explain --intent "web開発"
 ```
+
 **Result:** Success (after JSON parsing fix) - returned search results with intent-aware reranking
 
 ## Documentation Updates
@@ -224,11 +256,12 @@ Updated `README.md` to include aia-proxy configuration:
 ```yaml
 models:
   external_api:
-    base_url: http://localhost:11434  # aia-proxy endpoint
-    api_key: dummy  # any value works with aia-proxy
+    base_url: http://localhost:11434 # aia-proxy endpoint
+    api_key: dummy # any value works with aia-proxy
 ```
 
 Added instructions for:
+
 - Configuration via YAML
 - Configuration via environment variables
 - API endpoints supported
@@ -241,17 +274,20 @@ Added instructions for:
 **Formula:** `score = weight / (k + rank)`
 
 **Parameters:**
+
 - `k = 60` (standard constant from RRF research)
 - `weight = 2.0` for original queries, `1.0` for expansion queries
 - `rank` = 1-indexed position in search results
 
 **Query Types:**
+
 - `original`: User's original query (weight = 2.0)
 - `lex`: Keyword expansion queries (weight = 1.0)
 - `vec`: Semantic expansion queries (weight = 1.0)
 - `hyde`: Hypothetical document expansion queries (weight = 1.0)
 
 **Bonus System:**
+
 - rank 1: +0.05 bonus
 - rank 2-3: +0.02 bonus
 - rank 4+: no bonus
@@ -261,6 +297,7 @@ Added instructions for:
 **Formula:** `blendedScore = rrfWeight * rrfPositionScore + (1 - rrfWeight) * rerankScore`
 
 **RRF Weights (position-aware):**
+
 - rank 1: 75%
 - rank 2-3: 60%
 - rank 4+: 40%
@@ -272,12 +309,15 @@ Added instructions for:
 1. **Stop Open WebUI** (if running)
 2. **Start aia-proxy** (see `~/container/open-webui/aia-proxy/README.md`)
 3. **Update QMD config:**
+
    ```bash
    # Edit ~/.config/qmd/index.yml
    # Change base_url from http://localhost:3000/api to http://localhost:11434
    # Change api_key to dummy
    ```
+
 4. **Test:**
+
    ```bash
    qmd embed --force
    qmd query "test query" --explain
@@ -288,6 +328,7 @@ Added instructions for:
 1. **Stop aia-proxy**
 2. **Start Open WebUI**
 3. **Restore QMD config:**
+
    ```bash
    # Edit ~/.config/qmd/index.yml
    # Change base_url to http://localhost:3000/api
