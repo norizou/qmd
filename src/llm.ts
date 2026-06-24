@@ -560,6 +560,16 @@ export interface LLM {
    * Get the name of the embedding model
    */
   readonly embedModelName: string;
+
+  /**
+   * Get the name of the generation model
+   */
+  readonly generateModelName: string;
+
+  /**
+   * Get the name of the rerank model
+   */
+  readonly rerankModelName: string;
 }
 
 // =============================================================================
@@ -597,6 +607,14 @@ export class OpenAI implements LLM {
 
   get embedModelName(): string {
     return this.embedModel;
+  }
+
+  get generateModelName(): string {
+    return this.generateModel;
+  }
+
+  get rerankModelName(): string {
+    return this.rerankModel;
   }
 
   async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult | null> {
