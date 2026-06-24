@@ -2673,13 +2673,13 @@ export async function chunkDocumentByTokens(
   // For OpenAI (no tokenization), use character-based chunking directly with smaller chunks
   if (!hasTokenize || !hasDetokenize) {
     const isExternalApi = llm instanceof OpenAI;
-    // Use larger chunk size for external API with embeddinggemma-300m (2048 tokens)
+    // Use conservative chunk size for external API with embeddinggemma-300m (2048 tokens)
     // embeddinggemma-300m supports 2048 tokens (~1000-1500 Japanese chars)
-    // Use 800 tokens (~3200 chars) to be safe with margin
+    // Use 512 tokens (~2000 chars) to be safe with margin for AIA Gateway
     const avgCharsPerToken = 4;
-    const effectiveMaxTokens = isExternalApi ? 800 : maxTokens; // Increase to 800 tokens for external API
+    const effectiveMaxTokens = isExternalApi ? 512 : maxTokens; // Reduce to 512 tokens for external API
     const effectiveOverlapTokens = isExternalApi ? Math.floor(effectiveMaxTokens * 0.15) : overlapTokens;
-    const effectiveWindowTokens = isExternalApi ? 150 : windowTokens;
+    const effectiveWindowTokens = isExternalApi ? 100 : windowTokens;
     const maxChars = effectiveMaxTokens * avgCharsPerToken;
     const overlapChars = effectiveOverlapTokens * avgCharsPerToken;
     const windowChars = effectiveWindowTokens * avgCharsPerToken;

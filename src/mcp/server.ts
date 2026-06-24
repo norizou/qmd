@@ -669,6 +669,23 @@ export async function startMcpHttpServer(
     if (!quiet) console.error(msg);
   }
 
+  function logRequest(method: string, path: string, headers: any, body?: any): void {
+    if (!quiet) {
+      const headerStr = Object.entries(headers)
+        .filter(([k]) => !['host', 'user-agent', 'accept', 'content-length', 'content-type'].includes(k.toLowerCase()))
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(', ');
+      const bodyStr = body ? ` body=${JSON.stringify(body).slice(0, 200)}` : '';
+      console.error(`${ts()} ${method} ${path} [${headerStr}]${bodyStr}`);
+    }
+  }
+
+  function logResponse(status: number, duration: number): void {
+    if (!quiet) {
+      console.error(`${ts()} Response ${status} (${duration}ms)`);
+    }
+  }
+
   // Helper to collect request body
   async function collectBody(req: IncomingMessage): Promise<string> {
     const chunks: Buffer[] = [];
@@ -682,10 +699,137 @@ export async function startMcpHttpServer(
 
     try {
       if (pathname === "/health" && nodeReq.method === "GET") {
+        logRequest("GET", "/health", nodeReq.headers);
         const body = JSON.stringify({ status: "ok", uptime: Math.floor((Date.now() - startTime) / 1000) });
         nodeRes.writeHead(200, { "Content-Type": "application/json" });
         nodeRes.end(body);
-        log(`${ts()} GET /health (${Date.now() - reqStart}ms)`);
+        logResponse(200, Date.now() - reqStart);
+        return;
+      }
+
+      // OpenAPI spec endpoint for OpenWebUI integration
+      if (pathname === "/openapi.json" && nodeReq.method === "GET") {
+        logRequest("GET", "/openapi.json", nodeReq.headers);
+        const openApiSpec = {
+          openapi: "3.0.0",
+          info: {
+            title: "QMD Search API",
+            version: getPackageVersion(),
+            description: "Search and retrieve documents from QMD knowledge base",
+          },
+          paths: {
+            "/query": {
+              post: {
+                summary: "Search documents",
+                description: "Search the knowledge base using typed queries (lex/vec/hyde)",
+                operationId: "query",
+                requestBody: {
+                  required: true,
+                  content: {
+                    "application/json": {
+                      schema: {
+                        type: "object",
+                        required: ["searches"],
+                        properties: {
+                          searches: {
+                            type: "array",
+                            items: {
+                              type: "object",
+                              required: ["type", "query"],
+                              properties: {
+                                type: { type: "string", enum: ["lex", "vec", "hyde"] },
+                                query: { type: "string" },
+                              },
+                            },
+                          },
+                          limit: { type: "number", default: 10 },
+                          minScore: { type: "number", default: 0 },
+                          intent: { type: "string" },
+                          rerank: { type: "boolean", default: true },
+                          collections: { type: "array", items: { type: "string" } },
+                        },
+                      },
+                    },
+                  },
+                },
+                responses: {
+                  "200": {
+                    description: "Search results",
+                    content: {
+                      "application/json": {
+                        schema: {
+                          type: "object",
+                          properties: {
+                            results: {
+                              type: "array",
+                              items: {
+                                type: "object",
+                                properties: {
+                                  docid: { type: "string" },
+                                  file: { type: "string" },
+                                  title: { type: "string" },
+                                  score: { type: "number" },
+                                  context: { type: "string" },
+                                  snippet: { type: "string" },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            "/get": {
+              post: {
+                summary: "Get document",
+                description: "Retrieve a document by its file path or docid",
+                operationId: "get",
+                requestBody: {
+                  required: true,
+                  content: {
+                    "application/json": {
+                      schema: {
+                        type: "object",
+                        required: ["file"],
+                        properties: {
+                          file: { type: "string", description: "File path or docid (e.g., 'pages/meeting.md' or '#abc123')" },
+                          lineNumbers: { type: "boolean", default: false },
+                        },
+                      },
+                    },
+                  },
+                },
+                responses: {
+                  "200": {
+                    description: "Document content",
+                    content: {
+                      "application/json": {
+                        schema: {
+                          type: "object",
+                          properties: {
+                            file: { type: "string" },
+                            title: { type: "string" },
+                            body: { type: "string" },
+                            context: { type: "string" },
+                          },
+                        },
+                      },
+                    },
+                  },
+                  "404": {
+                    description: "Document not found",
+                  },
+                },
+              },
+            },
+          },
+        };
+        nodeRes.writeHead(200, { "Content-Type": "application/json" });
+        nodeRes.end(JSON.stringify(openApiSpec));
+        logResponse(200, Date.now() - reqStart);
         return;
       }
 
@@ -694,6 +838,7 @@ export async function startMcpHttpServer(
       if ((pathname === "/query" || pathname === "/search") && nodeReq.method === "POST") {
         const rawBody = await collectBody(nodeReq);
         const params = JSON.parse(rawBody) as Record<string, unknown>;
+        logRequest("POST", pathname, nodeReq.headers, params);
 
         // Validate required fields
         if (!params.searches || !Array.isArray(params.searches)) {
@@ -742,7 +887,41 @@ export async function startMcpHttpServer(
 
         nodeRes.writeHead(200, { "Content-Type": "application/json" });
         nodeRes.end(JSON.stringify({ results: formatted }));
-        log(`${ts()} POST /query ${params.searches.length} queries (${Date.now() - reqStart}ms)`);
+        logResponse(200, Date.now() - reqStart);
+        return;
+      }
+
+      // REST endpoint: POST /get — retrieve document by path or docid
+      if (pathname === "/get" && nodeReq.method === "POST") {
+        const rawBody = await collectBody(nodeReq);
+        const params = JSON.parse(rawBody);
+        logRequest("POST", "/get", nodeReq.headers, params);
+
+        if (!params.file) {
+          nodeRes.writeHead(400, { "Content-Type": "application/json" });
+          nodeRes.end(JSON.stringify({ error: "Missing required field: file" }));
+          logResponse(400, Date.now() - reqStart);
+          return;
+        }
+
+        const result = await store.get(params.file, { includeBody: true });
+
+        if ("error" in result) {
+          nodeRes.writeHead(404, { "Content-Type": "application/json" });
+          nodeRes.end(JSON.stringify({ error: result.error }));
+          logResponse(404, Date.now() - reqStart);
+          return;
+        }
+
+        const text = params.lineNumbers ? addLineNumbers(result.body || "") : (result.body || "");
+        nodeRes.writeHead(200, { "Content-Type": "application/json" });
+        nodeRes.end(JSON.stringify({
+          file: result.displayPath,
+          title: result.title,
+          body: text,
+          context: result.context,
+        }));
+        logResponse(200, Date.now() - reqStart);
         return;
       }
 
@@ -750,6 +929,7 @@ export async function startMcpHttpServer(
         const rawBody = await collectBody(nodeReq);
         const body = JSON.parse(rawBody);
         const label = describeRequest(body);
+        logRequest("POST", "/mcp", nodeReq.headers, body);
         const url = `http://localhost:${port}${pathname}`;
         const headers: Record<string, string> = {};
         for (const [k, v] of Object.entries(nodeReq.headers)) {
@@ -781,6 +961,7 @@ export async function startMcpHttpServer(
             error: { code: -32000, message: "Bad Request: Missing session ID" },
             id: body?.id ?? null,
           }));
+          logResponse(400, Date.now() - reqStart);
           return;
         }
 
@@ -789,7 +970,7 @@ export async function startMcpHttpServer(
 
         nodeRes.writeHead(response.status, Object.fromEntries(response.headers));
         nodeRes.end(Buffer.from(await response.arrayBuffer()));
-        log(`${ts()} POST /mcp ${label} (${Date.now() - reqStart}ms)`);
+        logResponse(response.status, Date.now() - reqStart);
         return;
       }
 
@@ -798,6 +979,7 @@ export async function startMcpHttpServer(
         for (const [k, v] of Object.entries(nodeReq.headers)) {
           if (typeof v === "string") headers[k] = v;
         }
+        logRequest(nodeReq.method || "GET", "/mcp", nodeReq.headers);
 
         // GET/DELETE must have a valid session
         const sessionId = headers["mcp-session-id"];
@@ -808,6 +990,7 @@ export async function startMcpHttpServer(
             error: { code: -32000, message: "Bad Request: Missing session ID" },
             id: null,
           }));
+          logResponse(400, Date.now() - reqStart);
           return;
         }
         const transport = sessions.get(sessionId);
@@ -818,6 +1001,7 @@ export async function startMcpHttpServer(
             error: { code: -32001, message: "Session not found" },
             id: null,
           }));
+          logResponse(404, Date.now() - reqStart);
           return;
         }
 
@@ -827,21 +1011,24 @@ export async function startMcpHttpServer(
         const response = await transport.handleRequest(request);
         nodeRes.writeHead(response.status, Object.fromEntries(response.headers));
         nodeRes.end(Buffer.from(await response.arrayBuffer()));
+        logResponse(response.status, Date.now() - reqStart);
         return;
       }
 
       nodeRes.writeHead(404);
       nodeRes.end("Not Found");
+      logResponse(404, Date.now() - reqStart);
     } catch (err) {
       console.error("HTTP handler error:", err);
       nodeRes.writeHead(500);
       nodeRes.end("Internal Server Error");
+      logResponse(500, Date.now() - reqStart);
     }
   });
 
   await new Promise<void>((resolve, reject) => {
     httpServer.on("error", reject);
-    httpServer.listen(port, "localhost", () => resolve());
+    httpServer.listen(port, () => resolve());
   });
 
   const actualPort = (httpServer.address() as import("net").AddressInfo).port;
@@ -869,7 +1056,7 @@ export async function startMcpHttpServer(
     process.exit(0);
   });
 
-  log(`QMD MCP server listening on http://localhost:${actualPort}/mcp`);
+  log(`QMD MCP server listening on http://0.0.0.0:${actualPort}/mcp`);
   return { httpServer, port: actualPort, stop };
 }
 
